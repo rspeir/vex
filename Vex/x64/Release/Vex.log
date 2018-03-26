@@ -1,0 +1,8 @@
+﻿  stdafx.cpp
+  Vex.cpp
+  Vex_Win32Platform.cpp
+  Generating code
+  All 18 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  Finished generating code
+  Vex.vcxproj -> C:\Users\Richard\Documents\Visual Studio 2015\Projects\Vex\x64\Release\Vex.exe
+  Vex.vcxproj -> C:\Users\Richard\Documents\Visual Studio 2015\Projects\Vex\x64\Release\Vex.pdb (Full PDB)
