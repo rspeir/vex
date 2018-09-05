@@ -7,22 +7,6 @@
 //#include <stdio.h>
 //#include <windowsx.h>
 
-
-
-static void sizeRuler(HWND hwnd, rulerData *data, uint32_t width, uint32_t height)
-{
-	switch (data->orientation)
-	{
-	case horizontal:
-		SetWindowPos(hwnd, HWND_TOP, RULER_THICKNESS, 0, width, RULER_THICKNESS, SWP_SHOWWINDOW);
-		break;
-	case vertical:
-		SetWindowPos(hwnd, HWND_TOP, 0, RULER_THICKNESS, RULER_THICKNESS, height, SWP_SHOWWINDOW);
-	default:
-		break;
-	}
-}
-
 static void paintRuler(HWND hwnd, rulerData *data)
 {
 	RECT rect;
@@ -50,7 +34,9 @@ static void paintRuler(HWND hwnd, rulerData *data)
 	cairo_surface_destroy(surface);
 
 	BitBlt(dc, 0, 0, width, height, newDC, rect.left, rect.top, SRCCOPY);
-	SelectObject(newDC, oldBmp);
+	//SelectObject(newDC, oldBmp);
+	DeleteObject(bmp);
+	DeleteObject(oldBmp);
 	DeleteDC(newDC);
 	EndPaint(hwnd, &paintStruct);
 }
@@ -60,6 +46,8 @@ LRESULT CALLBACK RulerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPa
 	rulerData *data = (rulerData *)GetWindowLongPtr(hWnd, 0);
 	RECT parentRect;
 	GetClientRect(GetParent(hWnd), &parentRect);
+	uint32_t width = parentRect.right - parentRect.left;
+	uint32_t height = parentRect.bottom - parentRect.top;
 	
 	switch (message)
 	{
@@ -76,7 +64,14 @@ LRESULT CALLBACK RulerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPa
 				free(data);
 			break;
 		case WM_SIZE:
-			sizeRuler(hWnd, data, LOWORD(lParam), HIWORD(lParam));
+			if (data->orientation == horizontal)
+			{
+				MoveWindow(hWnd, RULER_THICKNESS, 0, width, RULER_THICKNESS, TRUE);
+			}
+			if (data->orientation == vertical)
+			{
+				MoveWindow(hWnd, 0, RULER_THICKNESS, RULER_THICKNESS, height-46, TRUE);
+			}
 			break;
 		case WM_PAINT:
 			paintRuler(hWnd, data);
@@ -86,6 +81,12 @@ LRESULT CALLBACK RulerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPa
 			break;
 		case WM_SET_RULER_UNITS:
 			data->units = (unitType)wParam;
+			break;
+		case WM_SET_RULER_GRIDSUBDIVISIONS:
+			data->gridSubdivisions = (uint32_t)wParam;
+			break;
+		case WM_SET_RULER_GRIDSPACING:
+			data->gridSpacing = (uint32_t)wParam;
 			break;
 		default:
 			break;
@@ -113,5 +114,33 @@ ATOM registerRulerWindowClass(HINSTANCE hInstance)
 	wcex.hIconSm = NULL;
 
 	return RegisterClassExW(&wcex);
+}
+
+HWND createRuler(HWND parent, HINSTANCE instance, rulerOrientation orientation)
+{
+	HWND ruler;
+	RECT rect;
+	GetClientRect(parent, &rect);
+	uint32_t width = rect.right - rect.left;
+	uint32_t height = rect.bottom - rect.top;
+	switch (orientation)
+	{
+	case vertical:
+		ruler = CreateWindowEx(0, TEXT("Ruler"), TEXT("RulerVertical"), WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, RULER_THICKNESS, RULER_THICKNESS, height, parent, NULL, instance, NULL);
+		SendMessage(ruler, WM_SET_RULER_ORIENTATION, vertical, NULL);
+		break;
+	case horizontal:
+		ruler = CreateWindowEx(0, TEXT("Ruler"), TEXT("RulerHorizontal"), WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, RULER_THICKNESS, 0, width, RULER_THICKNESS, parent, NULL, instance, NULL);
+		SendMessage(ruler, WM_SET_RULER_ORIENTATION, horizontal, NULL);
+		break;
+	case corner:
+		ruler = CreateWindowEx(0, TEXT("Ruler"), TEXT("RulerCorner"), WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, RULER_THICKNESS, RULER_THICKNESS, parent, NULL, instance, NULL);
+		SendMessage(ruler, WM_SET_RULER_ORIENTATION, corner, NULL);
+		break;
+	default:
+		ruler = NULL;
+		break;
+	}
+	return ruler;
 }
 

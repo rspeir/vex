@@ -39,6 +39,12 @@
     <ClInclude Include="Vex_Win32Rulers.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Vex_Win32Canvas.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Vex_Win32ToolSelector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -54,6 +60,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Vex_Win32Rulers.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Vex_Win32Canvas.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Vex_Win32ToolSelector.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

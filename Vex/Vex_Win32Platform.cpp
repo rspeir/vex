@@ -14,6 +14,8 @@
 #include "Vex.h"
 #include "Vex_Win32UnitsGrid.h"
 #include "Vex_Win32Rulers.h"
+#include "Vex_Win32Canvas.h"
+#include "Vex_Win32ToolSelector.h"
 
 #define MAX_LOADSTRING 100
 
@@ -25,6 +27,7 @@ HWND statusBar;
 HWND rulerHorizontal;
 HWND rulerVertical;
 HWND rulerCorner;
+HWND canvas;
 
 void getDisplayInfo()
 {
@@ -89,6 +92,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     LoadStringW(hInstance, IDC_VEX, szWindowClass, MAX_LOADSTRING);
     MyRegisterClass(hInstance);
 	registerRulerWindowClass(hInstance);
+	registerCanvasWindowClass(hInstance);
 
     // Perform application initialization:
     if (!InitInstance (hInstance, nCmdShow))
@@ -161,7 +165,7 @@ static BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
    hInst = hInstance; // Store instance handle in our global variable
 
-   HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+   HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_EX_COMPOSITED,
       CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
 
    if (!hWnd)
@@ -174,6 +178,7 @@ static BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
    return TRUE;
 }
+
 
 
 void resizeRulers(UINT message, WPARAM wParam, LPARAM lParam)
@@ -192,46 +197,12 @@ void resizeRulers(UINT message, WPARAM wParam, LPARAM lParam)
 	}
 }
 
-static HWND createRuler(HWND parent, HINSTANCE instance, rulerOrientation orientation)
-{
-	HWND ruler;
-	RECT rect;
-	GetClientRect(parent, &rect);
-	uint32_t width = rect.right - rect.left;
-	uint32_t height = rect.bottom - rect.top;
-	switch (orientation)
-	{
-	case vertical:
-		ruler = CreateWindowEx(0, TEXT("Ruler"), TEXT("RulerVertical"), WS_CHILD | WS_VISIBLE, 0, RULER_THICKNESS, RULER_THICKNESS, height, parent, NULL, instance, NULL);
-		SendMessage(ruler, WM_SET_RULER_ORIENTATION, vertical, NULL);
-		break;
-	case horizontal:
-		ruler = CreateWindowEx(0, TEXT("Ruler"), TEXT("RulerHorizontal"), WS_CHILD | WS_VISIBLE, RULER_THICKNESS, 0, width, RULER_THICKNESS, parent, NULL, instance, NULL);
-		SendMessage(ruler, WM_SET_RULER_ORIENTATION, horizontal, NULL);
-		break;
-	case corner:
-		ruler = CreateWindowEx(0, TEXT("Ruler"), TEXT("RulerCorner"), WS_CHILD | WS_VISIBLE, 0, 0, RULER_THICKNESS, RULER_THICKNESS, parent, NULL, instance, NULL);
-		SendMessage(ruler, WM_SET_RULER_ORIENTATION, corner, NULL);
-		break;
-	default:
-		ruler = NULL;
-		break;
-	}
-	return ruler;
-}
 
 static HWND createStatusBar(HWND parent, HINSTANCE instance, uint16_t width)
 {
-	HWND wnd = CreateWindowEx(
-		0,                       // no extended styles
-		STATUSCLASSNAME,         // name of status bar class
-		(PCTSTR)NULL,			 // no text when first created
-		WS_CHILD | WS_VISIBLE,   // creates a visible child window
-		0, 0, 0, 0,              // ignores size and position
-		parent,					 // handle to parent window
-		NULL,					 // child window identifier
-		instance,                // handle to application instance
-		NULL);
+	HWND wnd = CreateWindowEx(0, STATUSCLASSNAME, NULL,	
+		WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 0, 0,              
+		parent, NULL, instance, NULL);
 
 	return wnd;
 }
@@ -288,10 +259,10 @@ static void processCommands(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 		DialogBox(hInst, MAKEINTRESOURCE(IDD_UNITSGRID), hWnd, UnitsGrid);
 		break;
 	case ID_VIEW_ZOOMIN:
-		zoomIn();
+		zoomIn(0,0,0,0);
 		break;
 	case ID_VIEW_ZOOMOUT:
-		zoomOut();
+		zoomOut(0,0,0,0);
 		break;
 	case ID_VIEW_ZOOM1:
 		zoomOneToOne();
@@ -327,29 +298,26 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	uint32_t width = rect.right - rect.left;
 	uint32_t height = rect.bottom - rect.top;
 
-	HDC dc, newDC;
-	PAINTSTRUCT paintStruct;
-	HGDIOBJ oldBmp;
-	HBITMAP bmp;
-
-	cairo_surface_t *surface;
-	cairo_t *cr;
+	
 
 	switch (message)
 	{
 		
 	// ******************** Window Management Stuff **************************
+	
 	case WM_CREATE:
 		vexInit();
 		getDisplayInfo();
 		rulerHorizontal = createRuler(hWnd, hInst, horizontal);
 		rulerVertical = createRuler(hWnd, hInst, vertical);
 		rulerCorner = createRuler(hWnd, hInst, corner);
+		canvas = createCanvas(hWnd, hInst);
 		statusBar = createStatusBar(hWnd, hInst, width);
 		break;
 	case WM_SIZE:
 		resizeRulers(message, wParam, lParam);
 		resizeStatusBar(message, wParam, lParam, width);
+		SendMessage(canvas, message, wParam, lParam);
 		break;
 	case WM_DESTROY:
 		quitProgram(); 
@@ -357,56 +325,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_COMMAND:
 		processCommands(hWnd, message, wParam, lParam);
 		break;
-	// ************************* Mouse Stuff *********************************
-	case WM_MOUSEMOVE:
-		mouseMove(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), width, height);
-		break;
-	case WM_LBUTTONDOWN:
-		mouseDown(Left, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), width, height);
-		break;
-	case WM_LBUTTONUP:
-		mouseUp(Left, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), width, height);
-		break;
-	case WM_MBUTTONDOWN:
-		mouseDown(Middle, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), width, height);
-		break;
-	case WM_MBUTTONUP:
-		mouseUp(Middle, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), width, height);
-		break;
-	case WM_RBUTTONDOWN:
-		mouseDown(Right, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), width, height);
-		break;
-	case WM_RBUTTONUP:
-		mouseUp(Right, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), width, height);
-		break;
-	case WM_MOUSEWHEEL:
-		mouseWheel(GET_WHEEL_DELTA_WPARAM(wParam), GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), width, height);
-		break;
-
-	case WM_PAINT:
-		dc = BeginPaint(hWnd, &paintStruct);
-		newDC = CreateCompatibleDC(dc);
-		bmp = CreateCompatibleBitmap(dc, width, height);
-		oldBmp = SelectObject(newDC, bmp);
-		surface = cairo_win32_surface_create(newDC);
-		cr = cairo_create(surface);
-
-		vexPaintDrawingBoard(cr, width, height);
-		cairo_destroy(cr);
-		cairo_surface_destroy(surface);
-
-		BitBlt(dc, 0, 0, width, height, newDC, rect.left, rect.top, SRCCOPY);
-		SelectObject(newDC, oldBmp);
-		DeleteDC(newDC);
-		EndPaint(hWnd, &paintStruct);
-		break;
-
 	default:
 		break;
 	} //switch(message)
-
 	return DefWindowProc(hWnd, message, wParam, lParam);
-
 }
 
 
@@ -434,13 +356,15 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 // Called by external functions to trigger a redraw of main program window
 void win32RedrawScreen()
 {
-	HWND wnd = FindWindow(szWindowClass, szTitle);
-	InvalidateRect(wnd, NULL, NULL);
-	//RedrawWindow(wnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOCHILDREN);
+	//HWND wnd = FindWindow(szWindowClass, szTitle);
+	//InvalidateRect(canvas, NULL, NULL);
+	if (canvas) RedrawWindow(canvas, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_INTERNALPAINT);
+	//if (canvas) UpdateWindow(canvas);
+//	SendMessage(canvas, WM_PAINT, 0, 0);
 }
 
 void win32RedrawRulers()
 {
-	if(rulerHorizontal) InvalidateRect(rulerHorizontal, NULL, NULL);//RedrawWindow(rulerHorizontal, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_INTERNALPAINT);//InvalidateRect(rulerHorizontal, NULL, NULL);
-	if(rulerVertical) InvalidateRect(rulerVertical, NULL, NULL);//RedrawWindow(rulerVertical, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_INTERNALPAINT);
+	if(rulerHorizontal) RedrawWindow(rulerHorizontal, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_INTERNALPAINT);//InvalidateRect(rulerHorizontal, NULL, NULL);
+	if(rulerVertical) RedrawWindow(rulerVertical, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_INTERNALPAINT);
 }

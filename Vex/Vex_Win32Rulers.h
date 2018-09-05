@@ -7,10 +7,9 @@
 #define WM_SET_RULER_GRIDSPACING 0x8004
 #define WM_SET_RULER_GRIDSUBDIVISIONS 0x8005
 
-#define RULER_THICKNESS 28
-
 LRESULT CALLBACK RulerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 ATOM registerRulerWindowClass(HINSTANCE hInstance);
+HWND createRuler(HWND parent, HINSTANCE instance, rulerOrientation orientation);
 
 typedef struct
 {

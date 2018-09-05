@@ -17,8 +17,8 @@ void populateEditBox(HWND box, uint16_t number)
 
 void populateUnitsLabel(HWND label, unitType unit)
 {
-	const char *unitNames[7] = { "mm", "cm", "m", "pt", "pc", "in", "ft" };
-	SetWindowTextA(label, unitNames[unit]);
+	//const char *unitNames[7] = { "mm", "cm", "m", "pt", "pc", "in", "ft" };
+	SetWindowTextA(label, unitTypeString(unit));
 }
 
 void validateEditBox(HWND wnd, uint16_t minval, uint16_t maxval)

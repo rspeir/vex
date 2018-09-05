@@ -2,12 +2,9 @@
 #include "Vex.h"
 #include "Vex_Win32Platform.h"
 #include "Vex_Win32Rulers.h"
+#include "Vex_Win32Canvas.h"
 #include <stdio.h>
 #include <math.h>
-
-uint32_t paintRulersCallCount;
-
-const char *unitNames[7] = { "millimeters", "centimeters", "meters", "points", "picas", "inches", "feet" };
 
 static programState *globalProgramState;
 
@@ -16,7 +13,6 @@ static void printGlobalProgramState()
 	printf("Global Program State:\n");
 	
 }
-
 
 void vexInit()
 {
@@ -28,9 +24,9 @@ void vexInit()
 	globalProgramState->panX = 0;
 	globalProgramState->panY = 0;
 	globalProgramState->currMouseState.buttons = 0;
+	globalProgramState->currTool = pentool;
+	globalProgramState->drawing.points = NULL;
 	zoomOneToOne();
-	//globalProgramState->zoom = 1.0;
-	paintRulersCallCount = 0;
 }
 
 programState *vexGetProgramState()
@@ -61,12 +57,78 @@ void vexSetProgramStateDisplayInfo(uint32_t dpi)
 	globalProgramState->dpi = dpi;
 }
 
+//TODO: Free sub-structures in globalProgramState before freeing globalProgramState
 void vexClose()
 {
 	free(globalProgramState);
 }
 
-void mouseMove(uint16_t x, uint16_t y, uint16_t winWidth, uint16_t winHeight)
+
+void vexScreenToCanvas(vexPoint *screenPoint)
+{
+	screenPoint->x = (screenPoint->x - globalProgramState->panX) / globalProgramState->zoom;
+	screenPoint->y = (screenPoint->y - globalProgramState->panY) / globalProgramState->zoom;
+}
+
+void vexCanvasToScreen(vexPoint *canvasPoint)
+{
+	canvasPoint->x = (canvasPoint->x * globalProgramState->zoom) + globalProgramState->panX;
+	canvasPoint->y = (canvasPoint->y * globalProgramState->zoom) + globalProgramState->panY;
+}
+
+double vexScreenToCanvasX(double x)
+{
+	return (x - globalProgramState->panX) / globalProgramState->zoom;
+}
+
+double vexScreenToCanvasY(double y)
+{
+	return (y - globalProgramState->panY) / globalProgramState->zoom;
+}
+
+double vexCanvasToScreenX(double x)
+{
+	return (x * globalProgramState->zoom) + globalProgramState->panX;
+}
+
+double vexCanvasToScreenY(double y)
+{
+	return (y * globalProgramState->zoom) + globalProgramState->panY;
+}
+
+
+
+void addPoint(float x, float y)
+{
+	vexPoint *newPoint = (vexPoint *)malloc(sizeof(vexPoint));
+
+	newPoint->x = x;
+	newPoint->y = y;
+	newPoint->selected = TRUE;
+
+	vexScreenToCanvas(newPoint);
+
+	pointList *newPointList = (pointList *)malloc(sizeof(pointList));
+	newPointList->point = newPoint;
+	newPointList->next = NULL;
+
+	if (globalProgramState->drawing.points == NULL)
+	{
+		globalProgramState->drawing.points = newPointList;
+	}
+	else
+	{
+		pointList *currentPoint = globalProgramState->drawing.points;
+		while (currentPoint->next != NULL)
+		{
+			currentPoint = currentPoint->next;
+		}
+		if (currentPoint->point->selected == TRUE) currentPoint->point->selected = FALSE;
+		currentPoint->next = newPointList;
+	}
+}
+
+void mouseMove(int32_t x, int32_t y, uint16_t winWidth, uint16_t winHeight)
 {
 	char buff[256];
 	
@@ -74,27 +136,27 @@ void mouseMove(uint16_t x, uint16_t y, uint16_t winWidth, uint16_t winHeight)
 	globalProgramState->prevMouseState.y = globalProgramState->currMouseState.y;
 	globalProgramState->currMouseState.x = x;
 	globalProgramState->currMouseState.y = y;
-	paintRulersCallCount++;
-	win32RedrawRulers();
 
 	// Right button drag = pan display area
 	if (globalProgramState->currMouseState.buttons & Right)
 	{
 		
-		globalProgramState->panX += (x - globalProgramState->prevMouseState.x);
-		globalProgramState->panY += (y - globalProgramState->prevMouseState.y);
+		globalProgramState->panX += ((double)x - (double)globalProgramState->prevMouseState.x);
+		globalProgramState->panY += ((double)y - (double)globalProgramState->prevMouseState.y);
 	
-		sprintf(buff, "Panning to %d, %d", globalProgramState->panX, globalProgramState->panY);
+		sprintf(buff, "Pan %f, %f", globalProgramState->panX, globalProgramState->panY);
 		writeToStatusBar(buff, 1);
 		win32RedrawScreen();
 		
 	}
 
+	win32RedrawRulers();
+
 	sprintf(buff, "X: %d Y: %d", x, y);
 	writeToStatusBar(buff, 0);
 }
 
-void mouseDown(clickType click, uint16_t x, uint16_t y, uint16_t winWidth, uint16_t winHeight)
+void mouseDown(clickType click, int32_t x, int32_t y, uint16_t winWidth, uint16_t winHeight)
 {
 	globalProgramState->currMouseState.buttons |= click;
 	globalProgramState->currMouseState.x = x;
@@ -105,54 +167,66 @@ void mouseDown(clickType click, uint16_t x, uint16_t y, uint16_t winWidth, uint1
 	writeToStatusBar(buff, 0);
 }
 
-void mouseUp(clickType click, uint16_t x, uint16_t y, uint16_t winWidth, uint16_t winHeight)
+void mouseUp(clickType click, int32_t x, int32_t y, uint16_t winWidth, uint16_t winHeight)
 {
 	globalProgramState->currMouseState.buttons &= ~click;
+
+	if (click == Left && globalProgramState->prevMouseState.buttons | Left)
+	{
+		addPoint((float)x, (float)y);
+	}
+	win32RedrawScreen();
 }
 
-void mouseWheel(int16_t delta, uint16_t x, uint16_t y, uint16_t winWidth, uint16_t winHeight)
+void mouseWheel(int32_t delta, int32_t x, int32_t y, uint16_t winWidth, uint16_t winHeight)
 {
 	if (delta > 1)
 	{
-		zoomIn();
+		zoomIn(x, y, winWidth, winHeight);
 	}
 	if (delta < 1)
 	{
-		zoomOut();
+		zoomOut(x, y, winWidth, winHeight);
 	}
+	char msg[255];
+	sprintf(msg, "Zoom: %f%%", (globalProgramState->zoom) * 100);
+	writeToStatusBar(msg, 2);
+	sprintf(msg, "Pan %f, %f", globalProgramState->panX, globalProgramState->panY);
+	writeToStatusBar(msg, 1);
+	win32RedrawScreen();
+	win32RedrawRulers();
 }
 
-void zoomIn()
+void zoomIn(int32_t x, int32_t y, uint16_t width, uint16_t height)
 {
 	if (globalProgramState->zoom < 10.0)
 	{
-		globalProgramState->zoom *= 1.05;
+		globalProgramState->panX -= (width/2) * 0.1;
+		globalProgramState->panY -= (height/2) * 0.1;
+		globalProgramState->zoom += 0.1f;	
 	}
-	char msg[255];
-	sprintf(msg, "Zoom: %f%%", (globalProgramState->zoom) * 100);
-	writeToStatusBar(msg, 1);
-	win32RedrawScreen();
 }
 
-void zoomOut()
+void zoomOut(int32_t x, int32_t y, uint16_t width, uint16_t height)
 {
-	if (globalProgramState->zoom > 0.1)
+	if (globalProgramState->zoom > 0.11)
 	{
-		globalProgramState->zoom *= 0.95;
+		globalProgramState->panX += (width/2) * .1;
+		globalProgramState->panY += (height/2) * .1;
+		globalProgramState->zoom -= 0.1f;
 	}
-	char msg[255];
-	sprintf(msg, "Zoom: %f%%", (globalProgramState->zoom) * 100);
-	writeToStatusBar(msg, 1);
-	win32RedrawScreen();
 }
 
 void zoomOneToOne()
 {
 	globalProgramState->zoom = 1.0;
+	globalProgramState->panX = 0;
+	globalProgramState->panY = 0;
 	char msg[255];
 	sprintf(msg, "Zoom: %f%%", (globalProgramState->zoom) * 100);
-	writeToStatusBar(msg, 1);
+	writeToStatusBar(msg, 2);
 	win32RedrawScreen();
+	win32RedrawRulers();
 }
 
 double convertUnits(double measurement, unitType in, unitType out)
@@ -346,6 +420,11 @@ double convertUnits(double measurement, unitType in, unitType out)
 	return retval;
 }
 
+const char *unitTypeString(unitType unit)
+{
+	return unitNames[unit];
+}
+
 
 void writeToStatusBar(const char *text, uint8_t panel)
 {
@@ -366,43 +445,122 @@ void writeToStatusBar(const char *text, uint8_t panel)
 }
 
 
-double sizeInPixels(unitType unit)
-{
-	double res = globalProgramState->dpi * convertUnits(1.0, unit, inches) * globalProgramState->zoom;
-	return res;
-}
-
-
 void vexPaintRuler(cairo_t *cr, int32_t width, int32_t height, rulerOrientation orientation)
 {
-	uint32_t mouseX = globalProgramState->currMouseState.x;
-	uint32_t mouseY = globalProgramState->currMouseState.y;
-
+	double mouseX = globalProgramState->currMouseState.x;
+	double mouseY = globalProgramState->currMouseState.y;
+	
+	const double dashes[] = { 2.0, 2.0 };
 	cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
 	cairo_set_line_width(cr, 1.0);
+
+	double pixelsPerGridLine = (double)globalProgramState->gridSpacing / globalProgramState->gridSubdivisions;
+	double minX = vexScreenToCanvasX(0);
+	double maxX = vexScreenToCanvasX(width);
+	double minY = vexScreenToCanvasY(0);
+	double maxY = vexScreenToCanvasY(height)+RULER_THICKNESS;
+	int lineCount;
+
 	switch (orientation)
 	{
 	case horizontal:
+		// Background color for ruler
 		cairo_set_source_rgb(cr, 0.87, 0.90, 0.80);
 		cairo_rectangle(cr, 0, 0, width, height);
 		cairo_fill(cr);
+
+		// Mouse cursor position indicator
 		cairo_set_source_rgb(cr, 0, 0, 0);
-		cairo_move_to(cr, mouseX - RULER_THICKNESS, 0);
-		cairo_line_to(cr, mouseX - RULER_THICKNESS, height);
+		cairo_move_to(cr, mouseX-RULER_THICKNESS, 0);
+		cairo_line_to(cr, mouseX-RULER_THICKNESS, RULER_THICKNESS);
 		cairo_stroke(cr);
+		
+		// Ruler boundary line
 		cairo_set_source_rgb(cr, 0.58, 0.65, 0.52);
 		cairo_move_to(cr, 0, height);
 		cairo_line_to(cr, width, height);
 		cairo_stroke(cr);
+		
+		// Measurement lines
+		cairo_set_source_rgb(cr, 0.68, 0.75, 0.62);
+		lineCount = 0;
+		for (double x = 0; x < maxX; x += pixelsPerGridLine)
+		{
+			cairo_move_to(cr, vexCanvasToScreenX(x)-RULER_THICKNESS, height);
+			if (lineCount % globalProgramState->gridSubdivisions == 0)
+			{
+				cairo_line_to(cr, vexCanvasToScreenX(x) - RULER_THICKNESS, height - RULER_THICKNESS);
+			}
+			else
+			{
+				cairo_line_to(cr, vexCanvasToScreenX(x) - RULER_THICKNESS, height - RULER_THICKNESS / 2);
+			}
+			cairo_stroke(cr);
+			lineCount++;
+		}
+		lineCount = 0;
+		for (double x = 0; x > minX; x -= pixelsPerGridLine)
+		{
+			cairo_move_to(cr, vexCanvasToScreenX(x) - RULER_THICKNESS, height);
+			if (lineCount % globalProgramState->gridSubdivisions == 0)
+			{
+				cairo_line_to(cr, vexCanvasToScreenX(x) - RULER_THICKNESS, height - RULER_THICKNESS);
+			}
+			else
+			{
+				cairo_line_to(cr, vexCanvasToScreenX(x) - RULER_THICKNESS, height - RULER_THICKNESS / 2);
+			}
+			cairo_stroke(cr);
+			lineCount++;
+		}
+
+
 		break;
 	case vertical:
+		// Background color
 		cairo_set_source_rgb(cr, 0.87, 0.90, 0.80);
 		cairo_rectangle(cr, 0, 0, width, height);
 		cairo_fill(cr);
+		// Mouse cursor position indicator
 		cairo_set_source_rgb(cr, 0, 0, 0);
-		cairo_move_to(cr, 0, mouseY - RULER_THICKNESS);
-		cairo_line_to(cr, RULER_THICKNESS, mouseY - RULER_THICKNESS);
+		cairo_move_to(cr, 0, mouseY-RULER_THICKNESS);
+		cairo_line_to(cr, RULER_THICKNESS, mouseY-RULER_THICKNESS);
 		cairo_stroke(cr);
+
+		// Measurement lines
+		lineCount = 0;
+		cairo_set_source_rgb(cr, 0.68, 0.75, 0.62);
+		for (double y = 0; y < maxY; y += pixelsPerGridLine)
+		{
+			cairo_move_to(cr, RULER_THICKNESS, vexCanvasToScreenY(y)-RULER_THICKNESS);
+			if (lineCount % globalProgramState->gridSubdivisions == 0)
+			{
+				cairo_line_to(cr, 0, vexCanvasToScreenY(y)-RULER_THICKNESS);
+			}
+			else
+			{
+				cairo_line_to(cr, RULER_THICKNESS / 2, vexCanvasToScreenY(y)-RULER_THICKNESS);
+			}
+			cairo_stroke(cr);
+			lineCount++;
+		}
+		lineCount = 0;
+		for (double y = 0; y > minY; y -= pixelsPerGridLine)
+		{
+			cairo_move_to(cr, RULER_THICKNESS, vexCanvasToScreenY(y) - RULER_THICKNESS);
+			if (lineCount % globalProgramState->gridSubdivisions == 0)
+			{
+				cairo_line_to(cr, 0, vexCanvasToScreenY(y) - RULER_THICKNESS);
+			}
+			else
+			{
+				cairo_line_to(cr, RULER_THICKNESS / 2, vexCanvasToScreenY(y) - RULER_THICKNESS);
+			}
+			cairo_stroke(cr);
+			lineCount++;
+		}
+
+		// Ruler Boundary
 		cairo_set_source_rgb(cr, 0.58, 0.65, 0.52);
 		cairo_move_to(cr, width, 0);
 		cairo_line_to(cr, width, height);
@@ -425,51 +583,125 @@ void vexPaintRuler(cairo_t *cr, int32_t width, int32_t height, rulerOrientation 
 		cairo_set_font_size(cr, 11);
 
 		cairo_text_extents_t extents;
-		cairo_text_extents(cr, "mm", &extents);
+
+		char *unitLabel;
+
+		switch (globalProgramState->currUnitType)
+		{
+		case millimeters:
+			unitLabel = "mm";
+			break;
+		case centimeters:
+			unitLabel = "cm";
+			break;
+		case meters:
+			unitLabel = "m";
+			break;
+		case points:
+			unitLabel = "pt";
+			break;
+		case picas:
+			unitLabel = "pc";
+			break;
+		case inches:
+			unitLabel = "in";
+			break;
+		case feet:
+			unitLabel = "ft";
+			break;
+		default:
+			unitLabel = "??";
+			break;
+		}
+
+		cairo_text_extents(cr, unitLabel, &extents);
 
 		cairo_move_to(cr, width / 2 - extents.width / 2, height-extents.height);
-		cairo_show_text(cr, "mm");
+		cairo_show_text(cr, unitLabel);
 		break;
-
 	}
+	//cairo_status_t cstat = cairo_status(cr);
+	//const char *statstring;
+	//statstring = cairo_status_to_string(cstat);
+	//printf("Cairo Status: %s\n", statstring);
 }
 
 
-void vexPaintDrawingBoard(cairo_t *cr, int32_t width, int32_t height)
+void vexPaintDrawingObjects(cairo_t *cr, int32_t width, int32_t height)
 {
+
+	//Start by drawing points:
+	// convert from canvas coords to screen coords
+	pointList *currPoint = globalProgramState->drawing.points;
+	while (currPoint != NULL)
+	{
+		vexPoint point = { false, currPoint->point->x, currPoint->point->y };
+		vexCanvasToScreen(&point);
+		cairo_move_to(cr, point.x, point.y);
+		cairo_arc(cr, point.x, point.y, 2, 0, 2*3.141592654);
+		cairo_set_source_rgb(cr, 0, 0, 0);
+	
+		currPoint = currPoint->next;
+	}
+	cairo_fill(cr);
+
+}
+
+
+// do we really need to do this?
+// NO.
+#if 0
+double sizeInPixels(unitType unit)
+{
+	double res = globalProgramState->dpi * convertUnits(1.0, unit, inches) * globalProgramState->zoom;
+	return res;
+}
+#endif
+
+
+void vexPaintCanvasBackground(cairo_t *cr, int32_t width, int32_t height)
+{
+
 	//Background
 	cairo_rectangle(cr, 0, 0, width, height);
 	cairo_set_source_rgb(cr, 0.92, 0.95, 0.85);
 	cairo_fill(cr);
+	
+	double pixelsPerGridLine = (double)globalProgramState->gridSpacing / globalProgramState->gridSubdivisions;
 
-	
-	int32_t pixelsPerGridLine = (uint32_t)ceill((sizeInPixels(globalProgramState->currUnitType) * ((double)globalProgramState->gridSpacing / (double)globalProgramState->gridSubdivisions)));
-	
 	cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
-	cairo_set_source_rgb(cr, 0.78, 0.85, 0.72);
 	cairo_set_line_width(cr, 1.0);
 
-	cairo_translate(cr, globalProgramState->panX, globalProgramState->panY);
-	int32_t panX = globalProgramState->panX;
-	int32_t panY = globalProgramState->panY;
-
-	if (pixelsPerGridLine > 2)
+	int lineCount = 0;
+	for (double x = 0; x < width; x+= pixelsPerGridLine)
 	{
-//		uint32_t lineCount = 0;
-		for (int32_t i = (0 - panX + (panX % pixelsPerGridLine)); i < (width - panX + (panX % pixelsPerGridLine)); i += pixelsPerGridLine)
+		if (lineCount % globalProgramState->gridSubdivisions == 0)
 		{
-			cairo_move_to(cr, i, 0-globalProgramState->panY);
-			cairo_line_to(cr, i, height-globalProgramState->panY);
-//			lineCount++;
+			cairo_set_source_rgb(cr, 0.68, 0.75, 0.62);
 		}
-//		lineCount = 0;
-		for (int32_t i = (0 - panY + (panY % pixelsPerGridLine)); i < (height - panY + (panY % pixelsPerGridLine)); i += pixelsPerGridLine)
+		else
 		{
-			cairo_move_to(cr, 0-globalProgramState->panX, i);
-			cairo_line_to(cr, width-globalProgramState->panX, i);
-//			lineCount++;
+			cairo_set_source_rgb(cr, 0.78, 0.85, 0.72);
 		}
+		cairo_move_to(cr, vexCanvasToScreenX(x), vexCanvasToScreenY(0));
+		cairo_line_to(cr, vexCanvasToScreenX(x), vexCanvasToScreenY(height));
+		lineCount++;
+		cairo_stroke(cr);
 	}
-	
-	cairo_stroke(cr);
+	lineCount = 0;
+	for (double y = 0; y < height; y += pixelsPerGridLine)
+	{
+		if (lineCount % globalProgramState->gridSubdivisions == 0)
+		{
+			cairo_set_source_rgb(cr, 0.68, 0.75, 0.62);
+		}
+		else
+		{
+			cairo_set_source_rgb(cr, 0.78, 0.85, 0.72);
+		}
+		cairo_move_to(cr, vexCanvasToScreenX(0), vexCanvasToScreenY(y));
+		cairo_line_to(cr, vexCanvasToScreenX(width), vexCanvasToScreenY(y));
+		lineCount++;
+		cairo_stroke(cr);
+	}
 }
